@@ -244,5 +244,9 @@ models/
 *.tfvars
 *.tfvars.json
 
+# Saidas de consulta: reproduziveis a partir dos .sql versionados
+sql/resultados/
+
 # Saidas de predicao do modelo
 results/
+
