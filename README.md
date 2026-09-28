@@ -63,15 +63,19 @@ quando ainda há tempo de intervir.
 
 ## 2. Objetivo analítico
 
-> ⏳ *A preencher na S2, após a EDA.*
+Classificação binária no grão do aluno, prevendo `alfabetizado` (1 se `proficiencia >=
+743` na escala Saeb, 0 caso contrário). O alvo está relativamente balanceado — 59,4% de
+positivos —, então acurácia continua informativa, mas acompanhada de precisão e recall.
 
-Classificação binária no grão do aluno, prevendo `alfabetizado`.
+O modelo responde **quem está em risco de não alfabetizar**, a partir de contexto
+disponível antes da avaliação (município, infraestrutura escolar, meta pactuada,
+histórico do ano anterior). Ele **não** responde por que um aluno específico não
+alfabetizou, nem substitui a avaliação em si — é sinal de risco, não diagnóstico.
 
-Cobrir nesta seção:
-
-- A formalização do problema e a definição da variável-alvo
-- O que o modelo responde e, explicitamente, o que **não** responde
-- Por que classificação e não regressão sobre a proficiência
+Classificação, e não regressão sobre a proficiência, porque a decisão de política pública
+é binária (aluno entra ou não em programa de apoio) e o corte de 743 pontos já é o
+critério oficial de alfabetização — regredir a proficiência adicionaria complexidade sem
+mudar a ação tomada a partir do resultado.
 
 ---
 
@@ -108,6 +112,10 @@ Uma linha por estudante avaliado em 2024, com 35 colunas.
 
 **Balanceamento saudável.** Com 59,4% de positivos, acurácia continua informativa — o que
 não seria verdade numa base 90/10.
+
+**Nulos parciais em 8 colunas.** Entre 0,001% e 2,6% (piores: `mun_meta_ano_alvo` e
+`mun_distancia_meta_anterior`), abaixo do limiar que bloqueia a Gold — tratados por
+imputação no pipeline de modelagem, não pela validação do Job.
 
 | Grupo | Colunas |
 |---|---|
@@ -353,14 +361,22 @@ construir bibliotecas alfabetiza.
 
 ## 9. Insights encontrados
 
-> ⏳ *A preencher na S6 e S7.*
-
-Dois achados da Fase 2 são candidatos a desdobramento:
+Dois achados da Fase 2 seguem como candidatos a desdobramento na modelagem:
 
 - O gradiente de infraestrutura — quase 10 pontos percentuais de taxa média entre o
-  primeiro e o quarto quartil do índice
+  primeiro e o quarto quartil do índice, no grão do município
 - O fenômeno de reversão em 1.917 municípios, mais que o triplo dos que avançam devagar
   demais
+
+A EDA da Fase 3 (`notebooks/01_eda.ipynb`), já no grão do aluno, confirma e refina:
+
+- O gradiente de infraestrutura se mantém, mas mais fraco — 6,9 p.p. entre Q1 e Q4 (contra
+  9,3 p.p. por município) — o efeito é real, mas parcialmente diluído aluno a aluno
+- Municípios marcados como `uf_anomala` (RS) têm taxa de 45,3% contra 59,9% no resto do
+  país — decidir incluir, marcar ou excluir essas linhas fica para a modelagem
+- Nulos pequenos (até 2,6%) em 8 colunas de contexto municipal, a tratar por imputação
+
+> ⏳ *Aprofundar na S6 e S7, com Feature Importance e SHAP.*
 
 ---
 
@@ -513,7 +529,13 @@ com `terraform version`.
 
 **Não é necessário `terraform.tfvars`.** O ARN da role é montado em tempo de execução a
 partir de `data.aws_caller_identity`, e os demais valores têm default em `variables.tf`.
-Para usar outro bucket ou prefixo, passe `-var` na linha de comando.
+Para usar outro bucket ou prefixo, passe `-var` na linha de comando — **o default é o
+bucket do autor original, não o seu**; use sempre `-var="bucket=<seu-bucket>"` (e a mesma
+variável `BUCKET=<seu-bucket>` ao rodar os scripts de `infra/` e `scripts/consultar.sh`).
+
+Se o bucket for trocado **depois** que o crawler já existir, o Terraform não consegue
+atualizar o `s3_target` in-place (o recrawl `CRAWL_NEW_FOLDERS_ONLY` o torna imutável) —
+use `terraform apply -replace="aws_glue_crawler.bronze"` nesse caso.
 
 > ⚠️ O `terraform.tfstate` e o `.terraform/` estão no `.gitignore` de
 > `infra/terraform/`. O *state* descreve a infraestrutura e o ID da conta.
@@ -583,7 +605,14 @@ aws s3 ls s3://<bucket>/fase3/gold/features_aluno/ --recursive --region us-east-
 bash scripts/consultar.sh verificacao_features_aluno
 ```
 
-**5. Construir o dataset de modelagem** ⏳
+**5. Baixar a Gold para uso local nos notebooks** — evita depender de sessão AWS/Athena a
+cada execução do EDA:
+
+```bash
+aws s3 cp s3://<bucket>/fase3/gold/features_aluno/ data/sample/features_aluno/ --recursive
+```
+
+**6. Construir o dataset de modelagem** ⏳
 
 ```bash
 # python src/preprocessing/dataset.py
@@ -625,9 +654,8 @@ data, aponte diretamente para a partição desejada.
 
 ### Notebooks
 
-```bash
-pip install -r requirements-dev.txt
-```
+As dependências de notebook (`jupyterlab`, `ipykernel`) já estão no `requirements.txt`
+principal — não é necessário instalar nada à parte.
 
 ---
 
@@ -713,7 +741,7 @@ contexto perdido amanhã.
 | Print — `terraform apply` | `images/` | ⏳ |
 | Print — crawler com partição reconhecida | `images/` | ⏳ |
 | Print — Glue Job da Gold concluído | `images/` | ⏳ |
-| Notebook de EDA com saídas | `notebooks/` | ⏳ |
+| Notebook de EDA com saídas | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) | ✅ |
 | Notebook de modelagem | `notebooks/` | ⏳ |
 | Matriz de confusão e curva ROC | `images/` | ⏳ |
 | Gráficos SHAP | `images/` | ⏳ |
@@ -733,7 +761,7 @@ anteriores coexistem em vez de serem sobrescritas.
 | S0 | 11–13/set | Repositório, estrutura, dependências | ✅ |
 | S1 | 14–20/set | Ingestão socioeconômica e catalogação | ✅ |
 | S1 | 14–20/set | Gold no grão do aluno, com vazamento tratado | ✅ |
-| S2 | 21–27/set | EDA | ⏳ |
+| S2 | 21–27/set | EDA | ✅ |
 | S3 | 28/set–04/out | Pré-processamento e baseline | ⏳ |
 | S4 | 05–11/out | Modelagem — algoritmos comparados | ⏳ |
 | S5 | 12–18/out | Otimização de hiperparâmetros | ⏳ |
